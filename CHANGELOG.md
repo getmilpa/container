@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.1](https://github.com/getmilpa/container/compare/v0.1.0...v0.1.1) (2026-07-08)
+
+
+### Bug Fixes
+
+* require milpa/core ^0.4 ([afe8900](https://github.com/getmilpa/container/commit/afe8900613ed188f3ec503e3d32477f350e477c3))
+
 ## 0.1.0 (2026-07-07)
 
 
