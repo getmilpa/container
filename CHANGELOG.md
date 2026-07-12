@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.3](https://github.com/getmilpa/container/compare/v0.1.2...v0.1.3) (2026-07-12)
+
+
+### Bug Fixes
+
+* receive milpa/core 0.6 — pin bump ([c076172](https://github.com/getmilpa/container/commit/c0761721b282870f90bae69da82cc0cb7dc014b7))
+
 ## [0.1.2](https://github.com/getmilpa/container/compare/v0.1.1...v0.1.2) (2026-07-08)
 
 
