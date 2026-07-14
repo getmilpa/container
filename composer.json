@@ -3,6 +3,12 @@
   "description": "Reflection-autowiring PSR-11 dependency injection container for the Milpa PHP framework: lazy singleton resolution, circular-dependency detection with chain reporting, and safe optional retrieval.",
   "type": "library",
   "license": "Apache-2.0",
+  "authors": [
+    {
+      "name": "Rodrigo Vicente - TeamX Agency",
+      "homepage": "https://teamx.agency"
+    }
+  ],
   "require": {
     "php": ">=8.3",
     "milpa/core": "^0.6",

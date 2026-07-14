@@ -120,7 +120,7 @@ $container->get(A::class);
 ## Requirements
 
 - PHP **≥ 8.3**
-- [`milpa/core`](https://packagist.org/packages/milpa/core) **^0.3**
+- [`milpa/core`](https://packagist.org/packages/milpa/core) **^0.6**
 - [`psr/container`](https://packagist.org/packages/psr/container) **^2.0**
 - [`symfony/dependency-injection`](https://packagist.org/packages/symfony/dependency-injection) **^7.0**
 
