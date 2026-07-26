@@ -1,0 +1,7 @@
+milpa/container — Reflection-autowiring PSR-11 dependency injection container for the Milpa PHP framework: lazy singleton resolution, circular-dependency detection with chain reporting, and safe optional retrieval.
+Copyright 2026 Rodrigo Vicente Gómez / TeamX Agency
+
+This product includes software developed by
+Rodrigo Vicente - TeamX Agency — https://x.com/rodrigoteamx
+
+https://teamx.agency · https://github.com/getmilpa/container
