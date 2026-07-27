@@ -92,6 +92,45 @@ class ServiceWithMixedParams
     }
 }
 
+class ServiceThatThrows
+{
+    public function __construct()
+    {
+        throw new \RuntimeException('No me puedo construir.');
+    }
+}
+
+class ServiceWithThrowingDependencyAndDefault
+{
+    public function __construct(public ?ServiceThatThrows $thrower = null)
+    {
+    }
+}
+
+class ServiceWithNullableThrowingDependency
+{
+    // Nullable, but no default: the container has to reach the allowsNull()
+    // arm to build this at all.
+    public function __construct(public ?ServiceThatThrows $thrower)
+    {
+    }
+}
+
+class ServiceWithAbstractDependency
+{
+    public function __construct(public ?AbstractTestService $service = null)
+    {
+    }
+}
+
+class ServiceWithUnknownClassDependency
+{
+    /** @phpstan-ignore-next-line the type naming a class that does not exist is the point */
+    public function __construct(public ?NoExisteEstaClase $x = null)
+    {
+    }
+}
+
 class CircularServiceA
 {
     public function __construct(public CircularServiceB $b)
@@ -639,5 +678,70 @@ class DIContainerTest extends TestCase
             $this->assertStringContainsString(CircularServiceB::class, $e->getMessage());
             $this->assertStringContainsString('->', $e->getMessage());
         }
+    }
+
+    // ---- what the container does when a dependency cannot be built ----------
+
+    public function testTryGetSwallowsAConstructorThatThrows(): void
+    {
+        // has() says yes — the class is concrete and takes no arguments — and
+        // then the constructor throws anyway. tryGet()'s contract is "never
+        // throw", so this is the case its catch exists for.
+        $this->assertTrue($this->container->has(ServiceThatThrows::class));
+        $this->assertNull($this->container->tryGet(ServiceThatThrows::class));
+    }
+
+    public function testGetStillThrowsWhereTryGetWouldReturnNull(): void
+    {
+        $this->expectException(\RuntimeException::class);
+
+        $this->container->get(ServiceThatThrows::class);
+    }
+
+    public function testADependencyThatThrowsFallsBackToItsDefault(): void
+    {
+        $service = $this->container->get(ServiceWithThrowingDependencyAndDefault::class);
+
+        $this->assertInstanceOf(ServiceWithThrowingDependencyAndDefault::class, $service);
+        $this->assertNull($service->thrower, 'The default stood in for the dependency that could not be built.');
+    }
+
+    public function testADependencyThatThrowsBecomesNullWhenTheParameterAllowsIt(): void
+    {
+        // No default to fall back to, but the parameter is nullable: null is
+        // the only value that lets the object exist at all.
+        $service = $this->container->get(ServiceWithNullableThrowingDependency::class);
+
+        $this->assertInstanceOf(ServiceWithNullableThrowingDependency::class, $service);
+        $this->assertNull($service->thrower);
+    }
+
+    public function testAnAbstractDependencyIsNotConsideredResolvable(): void
+    {
+        // Resolvable overall — the parameter has a default — but the abstract
+        // class itself is not something the container can instantiate.
+        $this->assertTrue($this->container->has(ServiceWithAbstractDependency::class));
+
+        $service = $this->container->get(ServiceWithAbstractDependency::class);
+
+        $this->assertNull($service->service);
+    }
+
+    public function testADependencyTypedWithAClassThatDoesNotExistIsNotResolvable(): void
+    {
+        $this->assertTrue($this->container->has(ServiceWithUnknownClassDependency::class));
+
+        $service = $this->container->get(ServiceWithUnknownClassDependency::class);
+
+        $this->assertNull($service->x);
+    }
+
+    public function testAnInterfaceIsRememberedAsUnresolvableInsteadOfBeingReflectedTwice(): void
+    {
+        // The first ask marks the interface; the second must answer from that
+        // note. Both answers have to agree — a cache that changed the answer
+        // would make has() depend on how many times it had been called.
+        $this->assertFalse($this->container->has(ServiceWithInterfaceDependency::class));
+        $this->assertFalse($this->container->has(ServiceWithInterfaceDependency::class));
     }
 }
