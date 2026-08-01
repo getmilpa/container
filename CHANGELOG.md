@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.5](https://github.com/getmilpa/container/compare/v0.1.4...v0.1.5) (2026-08-01)
+
+
+### Bug Fixes
+
+* **deps:** el pin de milpa/core deja de ser una jaula de un minor ([114ea75](https://github.com/getmilpa/container/commit/114ea75ff7689b050dc0ba046e7d73763ec704ac))
+
 ## [0.1.4](https://github.com/getmilpa/container/compare/v0.1.3...v0.1.4) (2026-08-01)
 
 
