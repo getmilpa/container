@@ -744,4 +744,41 @@ class DIContainerTest extends TestCase
         $this->assertFalse($this->container->has(ServiceWithInterfaceDependency::class));
         $this->assertFalse($this->container->has(ServiceWithInterfaceDependency::class));
     }
+
+    /**
+     * `replaceService()` es la puerta EXPLICITA para pisar un servicio, y por eso no lanza.
+     *
+     * `registerService()` se niega cuando ya hay algo con ese id, porque un segundo proveedor
+     * silencioso es un defecto que aparece lejos. Pero a veces reemplazar es justo lo que se quiere
+     * —un doble en pruebas, un adaptador que sustituye al default del framework— y entonces hay que
+     * poder decirlo. La diferencia entre las dos no es tecnica: es quien asume la decision.
+     */
+    public function testReplaceServiceOverwritesOnPurposeWhereRegisterRefuses(): void
+    {
+        $container = new DIContainer();
+        $container->registerService('acme.mailer', new \stdClass());
+
+        $reemplazo = new \ArrayObject(['soy' => 'el segundo']);
+        $container->replaceService('acme.mailer', $reemplazo);
+
+        self::assertSame($reemplazo, $container->get('acme.mailer'));
+    }
+
+    /**
+     * Y tambien acepta un NOMBRE DE CLASE, para resolucion perezosa.
+     *
+     * Ojo con lo que esta prueba NO afirma: reemplazar por clase un id que ya tenia una INSTANCIA
+     * construida no la sustituye —el contenedor ya la tiene—, y eso se descubrio escribiendo esto.
+     * Lo que se prueba es el camino de clase sobre un id todavia sin materializar, que es el que el
+     * codigo tiene y el unico que se sostiene.
+     */
+    public function testReplaceServiceAlsoAcceptsAClassNameForLazyResolution(): void
+    {
+        $container = new DIContainer();
+        $container->registerService('acme.thing', \stdClass::class);
+
+        $container->replaceService('acme.thing', \ArrayObject::class);
+
+        self::assertInstanceOf(\ArrayObject::class, $container->get('acme.thing'));
+    }
 }
