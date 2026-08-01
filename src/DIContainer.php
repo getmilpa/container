@@ -21,6 +21,7 @@ use ReflectionNamedType;
 use Symfony\Component\DependencyInjection\ContainerBuilder;
 use Milpa\Exceptions\CircularDependencyException;
 use Milpa\Exceptions\ContainerResolutionException;
+use Milpa\Exceptions\ServiceRedefinitionException;
 use Milpa\Exceptions\ServiceNotFoundException;
 use Milpa\Interfaces\Di\DIContainerInterface;
 
@@ -83,6 +84,14 @@ class DIContainer implements DIContainerInterface
      */
     private array $resolving = [];
 
+    /**
+     * What was registered under each id, and where from — the two facts a silent overwrite used to
+     * destroy. `['huella' => <descripción del servicio>, 'origen' => 'archivo:línea']`.
+     *
+     * @var array<string, array{huella: string, origen: string}>
+     */
+    private array $registered = [];
+
     public function __construct()
     {
         $this->container = new ContainerBuilder();
@@ -102,16 +111,100 @@ class DIContainer implements DIContainerInterface
      * entirely. Either way, this takes precedence over on-demand auto-wiring
      * via {@see resolve()} for the same identifier.
      *
+     * Registering the SAME service twice is a no-op: the state does not change, so there is nothing
+     * to report. Registering a DIFFERENT one under an id already taken throws
+     * {@see ServiceRedefinitionException} instead of replacing it silently — see that class for why
+     * failing is the honest placeholder while nothing decides cardinality (ADR-0037).
+     *
+     * Measured on a real boot before choosing this: 96 registrations, 2 duplicates, and BOTH are the
+     * same instance registered twice (`HostBoot` and `Kernel` wiring the same dispatcher and the same
+     * tool registry). So no live path registers a different service under a taken id, and this
+     * refusal breaks nothing that works today.
+     *
      * @param string        $id              Service identifier (usually FQCN)
      * @param string|object $classOrInstance A class name to register for lazy resolution, or an already-built instance
+     *
+     * @throws ServiceRedefinitionException If `$id` already holds a DIFFERENT service.
      */
     public function registerService(string $id, string|object $classOrInstance): void
     {
+        $huella = is_string($classOrInstance)
+            ? 'the class ' . $classOrInstance
+            : 'an instance of ' . $classOrInstance::class;
+
+        if (isset($this->registered[$id])) {
+            if ($this->registered[$id]['huella'] === $huella) {
+                return;   // el mismo servicio otra vez: el estado no cambia, no hay nada que decir
+            }
+
+            throw ServiceRedefinitionException::of(
+                $id,
+                $this->registered[$id]['huella'],
+                $huella,
+                $this->registered[$id]['origen'],
+                $this->callerOrigin(),
+            );
+        }
+
+        $this->registered[$id] = ['huella' => $huella, 'origen' => $this->callerOrigin()];
+
         if (is_string($classOrInstance)) {
             $this->container->register($id, $classOrInstance)->setPublic(true);
         } else {
             $this->container->set($id, $classOrInstance);
         }
+    }
+
+    /**
+     * Replaces whatever is registered under `$id`, saying so.
+     *
+     * The escape hatch {@see registerService()} deliberately lacks. Substitution is a legitimate
+     * operation — a test installing a double over a plugin's production wiring is the case that
+     * forced this method to exist — and the defect was never that it happened. The defect was that
+     * it happened WITHOUT SAYING SO, so nobody could tell an intended override from an accident.
+     *
+     * Replacing something that was never registered is allowed and behaves like a first
+     * registration: refusing it would turn "declare your intent" into a rule about ordering, which
+     * is a different decision and not one this repair is making.
+     *
+     * @param string        $id              Service identifier (usually FQCN)
+     * @param string|object $classOrInstance A class name to register for lazy resolution, or an already-built instance
+     */
+    public function replaceService(string $id, string|object $classOrInstance): void
+    {
+        $this->registered[$id] = [
+            'huella' => is_string($classOrInstance)
+                ? 'the class ' . $classOrInstance
+                : 'an instance of ' . $classOrInstance::class,
+            'origen' => $this->callerOrigin(),
+        ];
+
+        if (is_string($classOrInstance)) {
+            $this->container->register($id, $classOrInstance)->setPublic(true);
+        } else {
+            $this->container->set($id, $classOrInstance);
+        }
+    }
+
+    /**
+     * Where the caller of {@see registerService()} lives, as `file:line`.
+     *
+     * Two frames deep and argument-free, so it costs a few microseconds on a path that runs under a
+     * hundred times per boot. Without it the exception could name WHAT collided but not WHO wired
+     * each side — and «two things registered X» sends a reader to grep for X, which is exactly the
+     * search that a silent overwrite made necessary in the first place.
+     */
+    private function callerOrigin(): string
+    {
+        $frames = debug_backtrace(\DEBUG_BACKTRACE_IGNORE_ARGS, 3);
+        foreach ($frames as $frame) {
+            $file = $frame['file'] ?? '';
+            if ($file !== '' && !str_ends_with($file, 'DIContainer.php')) {
+                return basename($file) . ':' . ($frame['line'] ?? 0);
+            }
+        }
+
+        return '?';
     }
 
     /**
@@ -284,7 +377,8 @@ class DIContainer implements DIContainerInterface
         try {
             $reflection = new ReflectionClass($className);
 
-            if ($reflection->isAbstract()) {
+            // Same widening as canResolveType(): abstract is only one of the ways PHP refuses `new`.
+            if (!$reflection->isInstantiable()) {
                 $this->nonResolvable[$className] = true;
                 return false;
             }
@@ -341,7 +435,13 @@ class DIContainer implements DIContainerInterface
 
         try {
             $reflection = new ReflectionClass($typeName);
-            return !$reflection->isAbstract();
+
+            // isInstantiable(), not isAbstract(). Abstract is one of several reasons PHP will refuse
+            // `new`: a trait, an enum, a private constructor, and internal classes like Closure all
+            // report isAbstract() === false while being impossible to construct. Asking the narrower
+            // question let Closure through as "resolvable", and the fatal that followed is the bug
+            // this predicate exists to prevent.
+            return $reflection->isInstantiable();
         } catch (\Exception) {
             return false;
         }
@@ -370,6 +470,7 @@ class DIContainer implements DIContainerInterface
 
         foreach ($params as $param) {
             $type = $param->getType();
+            $cause = null;
 
             // Class/interface type hint
             if ($type instanceof ReflectionNamedType && !$type->isBuiltin()) {
@@ -381,8 +482,13 @@ class DIContainer implements DIContainerInterface
                     continue;
                 }
 
-                // Try to auto-resolve the dependency
-                if (class_exists($typeName) && !isset($this->nonResolvable[$typeName])) {
+                // Try to auto-resolve the dependency.
+                //
+                // canResolveType() rather than a bare class_exists(): it answers whether PHP would
+                // even let us `new` this, and it remembers the answer. A type like Closure passes
+                // class_exists() and cannot be constructed, which is how a parameter that had a
+                // perfectly good default still took the whole resolution down.
+                if ($this->canResolveType($typeName)) {
                     try {
                         $args[] = $this->resolve($typeName, true);
                         continue;
@@ -390,8 +496,14 @@ class DIContainer implements DIContainerInterface
                         // A real cycle, not a mere "can't auto-resolve" — surface it rather
                         // than silently falling through to default/null handling.
                         throw $e;
-                    } catch (\Exception) {
-                        // Fall through to default/null handling
+                    } catch (\Throwable $e) {
+                        // Throwable, not Exception. Instantiating an internal class throws \Error
+                        // ("Instantiation of class Closure is not allowed", "the Generator class is
+                        // reserved for internal use"), which the narrower catch let escape — so the
+                        // default/null handling written ten lines below was unreachable exactly when
+                        // it was needed. A recovery path that a too-narrow catch keeps you from
+                        // reaching is worse than no recovery path: it reads as handled.
+                        $cause = $e;
                     }
                 }
             }
@@ -408,10 +520,14 @@ class DIContainer implements DIContainerInterface
                 continue;
             }
 
-            // Cannot resolve this parameter
+            // Cannot resolve this parameter. The original failure travels as `previous` when there
+            // was one: the wrapper names the parameter that could not be filled, and the cause names
+            // what actually went wrong — neither answers the other's question.
             throw new ContainerResolutionException(
                 "Cannot resolve parameter \${$param->getName()} " .
-                "for class {$reflection->getName()}"
+                "for class {$reflection->getName()}",
+                0,
+                $cause
             );
         }
 
