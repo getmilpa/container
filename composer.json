@@ -20,7 +20,7 @@
   ],
   "require": {
     "php": ">=8.3",
-    "milpa/core": "^0.6.2 || ^0.7",
+    "milpa/core": "^0.6.2 || ^0.7 || ^0.8",
     "psr/container": "^2.0",
     "symfony/dependency-injection": "^7.0"
   },
